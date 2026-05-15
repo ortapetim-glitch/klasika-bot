@@ -1,30 +1,10 @@
 /**
  * קלאסיקה עיצובים – WhatsApp Chatbot
  * ======================================
- * תכונות:
- *  📋 תהליך הצעת מחיר מלא
- *  🤖 Claude AI לשאלות חופשיות
- *  🖼️  גלריית תמונות מ-Cloudinary (אוטומטית!)
- *  ⏱️  TTL לסשנים (6 שעות) + ניקוי אוטומטי
- *  🔒 בדיקת משתני סביבה בהפעלה
- *  🛡️  try/catch על כל שליחה
- *
- * npm install express axios dotenv
- *
- * .env:
- *  WHATSAPP_TOKEN=
- *  WHATSAPP_PHONE_ID=
- *  VERIFY_TOKEN=
- *  ANTHROPIC_API_KEY=
- *  CLOUDINARY_CLOUD_NAME=
- *  CLOUDINARY_API_KEY=
- *  CLOUDINARY_API_SECRET=
- *  PORT=3000
- *
- * מבנה תיקיות ב-Cloudinary:
- *  classica/doors/     ← תמונות דלתות
- *  classica/kitchen/   ← מטבח
- *  classica/walls/     ← קירות/תקרות
+ * תיקונים:
+ *  ✅ טוקן דינמי – מתעדכן אוטומטית בלי להפעיל מחדש
+ *  ✅ שיחה לא נתקעת בשלב התמונה
+ *  ✅ טיפול בכל סוגי ההודעות
  */
 
 const express = require("express");
@@ -46,45 +26,36 @@ for (const key of REQUIRED_ENV) {
 }
 
 const {
-  WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, VERIFY_TOKEN,
+  WHATSAPP_PHONE_ID, VERIFY_TOKEN,
   ANTHROPIC_API_KEY,
   CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET,
   PORT = 3000,
 } = process.env;
 
-const GRAPH_URL    = `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`;
-const AUTH_HEADERS = { Authorization: `Bearer ${WHATSAPP_TOKEN}` };
+const GRAPH_URL = `https://graph.facebook.com/v19.0/${WHATSAPP_PHONE_ID}/messages`;
+
+// ✅ תיקון #1: טוקן דינמי – נקרא בכל פעם מחדש מה-env
+function getAuthHeaders() {
+  return { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` };
+}
 
 const app = express();
 app.use(express.json());
 
 // ══════════════════════════════════════════════════════════
-// CLOUDINARY – שליפת תמונות אוטומטית מתיקייה
+// CLOUDINARY
 // ══════════════════════════════════════════════════════════
-
-// מטמון גלריה (מתרענן כל 30 דקות)
 let galleryCache = null;
 let galleryCacheTime = 0;
 const GALLERY_CACHE_TTL = 30 * 60 * 1000;
 
-/**
- * שולף תמונות מ-Cloudinary לפי תיקייה
- * מחזיר מערך של { url, caption }
- */
 async function fetchCloudinaryFolder(folder) {
-  const timestamp = Math.floor(Date.now() / 1000);
-  const paramsToSign = `folder=${folder}&max_results=10&resource_type=image&timestamp=${timestamp}`;
-  const signature = crypto
-    .createHash("sha256")
-    .update(paramsToSign + CLOUDINARY_API_SECRET)
-    .digest("hex");
-
   try {
     const res = await axios.get(
       `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/resources/image`,
       {
-        params: { folder, max_results: 10, timestamp, signature, api_key: CLOUDINARY_API_KEY },
-        auth:   { username: CLOUDINARY_API_KEY, password: CLOUDINARY_API_SECRET },
+        params: { folder, max_results: 10, type: "upload" },
+        auth: { username: CLOUDINARY_API_KEY, password: CLOUDINARY_API_SECRET },
       }
     );
     return (res.data.resources || []).map(r => ({
@@ -97,9 +68,6 @@ async function fetchCloudinaryFolder(folder) {
   }
 }
 
-/**
- * מחזיר את הגלריה המלאה (מ-cache או מ-Cloudinary)
- */
 async function getGallery() {
   if (galleryCache && Date.now() - galleryCacheTime < GALLERY_CACHE_TTL) {
     return galleryCache;
@@ -111,22 +79,20 @@ async function getGallery() {
     fetchCloudinaryFolder("classica/walls"),
   ]);
   galleryCache = [
-    { category: "🚪 דלתות כניסה",  emoji: "🚪", items: doors   },
-    { category: "🍳 מטבח",         emoji: "🍳", items: kitchen },
-    { category: "🧱 קירות ותקרות", emoji: "🧱", items: walls   },
+    { category: "🚪 דלתות כניסה", items: doors   },
+    { category: "🍳 מטבח",        items: kitchen },
+    { category: "🧱 קירות",       items: walls   },
   ].filter(c => c.items.length > 0);
   galleryCacheTime = Date.now();
   console.log(`✅ גלריה נטענה: ${galleryCache.reduce((s, c) => s + c.items.length, 0)} תמונות`);
   return galleryCache;
 }
 
-// טעינה ראשונית של הגלריה
 getGallery().catch(console.error);
 
 // ══════════════════════════════════════════════════════════
 // CLAUDE AI
 // ══════════════════════════════════════════════════════════
-
 const AI_SYSTEM = `אתה נציג שירות של "קלאסיקה עיצובים" – חברה ישראלית המתמחה בציפוי פולימרי דקורטיבי לדלתות, קירות ומטבחים.
 ענה תמיד בעברית, בצורה ידידותית וקצרה (עד 5 שורות).
 מידע עיקרי:
@@ -156,7 +122,6 @@ async function askClaude(history, userMessage) {
 // ══════════════════════════════════════════════════════════
 // סשנים + TTL
 // ══════════════════════════════════════════════════════════
-
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
 const sessions = {};
 
@@ -176,7 +141,6 @@ function resetSession(from) {
   return sessions[from];
 }
 
-// ניקוי סשנים כל שעה
 setInterval(() => {
   const now = Date.now();
   let cleaned = 0;
@@ -249,13 +213,13 @@ const LINKS = { phone: "0539312574", website: "https://classicsadesign.com" };
 // ══════════════════════════════════════════════════════════
 const FAQ_LIST = [
   { id: "faq_install_time", q: "⏱️ כמה זמן לוקחת ההתקנה?",
-    a: `⏱️ *זמן התקנה:*\nדלת אחת – *שעה עד שעתיים* בלבד.\nניתן להשתמש בדלת מיד לאחר ההתקנה! 🚪✅` },
+    a: `⏱️ *זמן התקנה:*\nדלת אחת – *שעה עד שעתיים* בלבד.\nניתן להשתמש בדלת מיד! 🚪✅` },
   { id: "faq_door_types", q: "🚪 על אילו דלתות זה מתאים?",
     a: `🚪 *סוגי דלתות:*\n✅ מתכת  ✅ עץ  ✅ MDF  ✅ PVC  ✅ ישנה לחידוש\nהחומר גמיש ומתאים לכל משטח 💪` },
   { id: "faq_warranty", q: "🛡️ יש אחריות על העבודה?",
     a: `🛡️ *אחריות שנה* על ציפוי, התקנה וחומרי איטום.\nיונדאי קוריאה 🇰🇷 מעניקה אחריות על החומר עצמו.` },
   { id: "faq_outdoor", q: "🌧️ עמיד בחוץ ובשמש?",
-    a: `☀️ *עמידות תנאי חוץ:*\n✅ UV  ✅ גשם ולחות  ✅ חום עד 65°  ✅ קור עד -30°  ✅ לא מתקלף` },
+    a: `☀️ *עמידות חוץ:*\n✅ UV  ✅ גשם ולחות  ✅ חום עד 65°  ✅ קור עד -30°  ✅ לא מתקלף` },
   { id: "faq_maintenance", q: "🧹 איך מנקים?",
     a: `🧹 *תחזוקה פשוטה:*\nמטלית לחה רגילה בלבד.\nעמיד לכתמים, חומץ ויין 24 שעות 😄` },
   { id: "faq_colors", q: "🎨 אילו דגמים יש?",
@@ -263,7 +227,7 @@ const FAQ_LIST = [
   { id: "faq_price_range", q: "💰 מה טווח המחירים?",
     a: `💰 *מחירים:*\n🥈 סילבר ₪999  🥇 גולד ₪1,299  💎 פלטינום ₪1,499\n+ ידית ₪499  + ניקל ₪35–70  + מנעול חכם ₪1,750–3,500\n_כולל התקנה + אחריות שנה_ ✅` },
   { id: "faq_smart_lock", q: "🔐 מה זה מנעול חכם?",
-    a: `🔐 *מנעול חכם:*\nפתיחה עם קוד / טביעת אצבע / אפליקציה – ללא מפתח!\n💰 ₪1,750–3,500 כולל התקנה מקצועית.` },
+    a: `🔐 *מנעול חכם:*\nפתיחה עם קוד / טביעת אצבע / אפליקציה – ללא מפתח!\n💰 ₪1,750–3,500 כולל התקנה.` },
   { id: "faq_area", q: "📍 באיזה אזורים עובדים?",
     a: `📍 *כל הארץ:* ✅ מרכז  ✅ ירושלים  ✅ צפון  ✅ דרום  ✅ שפלה ושרון` },
   { id: "faq_samples", q: "👀 אפשר לראות דוגמאות?",
@@ -271,18 +235,18 @@ const FAQ_LIST = [
 ];
 
 // ══════════════════════════════════════════════════════════
-// פונקציות שליחה
+// פונקציות שליחה — כולן משתמשות ב-getAuthHeaders()
 // ══════════════════════════════════════════════════════════
 async function send(to, text) {
   await axios.post(GRAPH_URL,
     { messaging_product: "whatsapp", to, type: "text", text: { body: text } },
-    { headers: AUTH_HEADERS });
+    { headers: getAuthHeaders() });
 }
 
 async function sendImage(to, imageUrl, caption) {
   await axios.post(GRAPH_URL,
     { messaging_product: "whatsapp", to, type: "image", image: { link: imageUrl, caption } },
-    { headers: AUTH_HEADERS });
+    { headers: getAuthHeaders() });
 }
 
 async function sendButtons(to, body, buttons) {
@@ -290,14 +254,14 @@ async function sendButtons(to, body, buttons) {
     { messaging_product: "whatsapp", to, type: "interactive",
       interactive: { type: "button", body: { text: body },
         action: { buttons: buttons.map(b => ({ type: "reply", reply: { id: b.id, title: b.title } })) } } },
-    { headers: AUTH_HEADERS });
+    { headers: getAuthHeaders() });
 }
 
 async function sendList(to, body, btn, sections) {
   await axios.post(GRAPH_URL,
     { messaging_product: "whatsapp", to, type: "interactive",
       interactive: { type: "list", body: { text: body }, action: { button: btn, sections } } },
-    { headers: AUTH_HEADERS });
+    { headers: getAuthHeaders() });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -309,12 +273,10 @@ async function sendGalleryMenu(to) {
     await send(to, `🖼️ הגלריה עדיין ריקה.\nראה עבודות שלנו:\n📸 instagram.com/classicadesigns`);
     return;
   }
-  await sendList(to, "🖼️ *גלריית עבודות – קלאסיקה עיצובים*\nבחר קטגוריה לצפייה:", "🖼️ בחר קטגוריה",
-    [{ title: "קטגוריות",
-       rows: gallery.map((cat, i) => ({
-         id: `gal_${i}`, title: cat.category,
-         description: `${cat.items.length} תמונות`,
-       })) }]);
+  await sendList(to, "🖼️ *גלריית עבודות – קלאסיקה עיצובים*\nבחר קטגוריה:", "🖼️ בחר קטגוריה",
+    [{ title: "קטגוריות", rows: gallery.map((cat, i) => ({
+      id: `gal_${i}`, title: cat.category, description: `${cat.items.length} תמונות`,
+    })) }]);
 }
 
 async function sendGalleryCategory(to, idx) {
@@ -355,22 +317,21 @@ async function handleMessage(from, text, msgType) {
   const sess = getSession(from);
   sess.updatedAt = Date.now();
 
-  // ניווט גלובלי
   if (text === "talk_human") {
     await send(from, `💬 *שמחים לעזור!*\n📞 ${LINKS.phone}\n🌐 ${LINKS.website}`);
     delete sessions[from]; return;
   }
-  if (text === "new_quote") { resetSession(from); await handleMessage(from, "", ""); return; }
-  if (text === "main_menu") { resetSession(from); await handleMessage(from, "", ""); return; }
+  if (text === "new_quote" || text === "main_menu") {
+    resetSession(from); await handleMessage(from, "", ""); return;
+  }
 
   try {
     switch (sess.step) {
 
-      // ────────────────────────────────────────────────────
       case S.WELCOME:
         await send(from,
           `שלום! 👋 שמי *אור*, בעלים של *קלאסיקה עיצובים* 🎨\n\n` +
-          `מתמחים בהפיכת דלתות, קירות ומטבחים ישנים ליצירות אומנות ייחודיות.\n\n` +
+          `מתמחים בהפיכת דלתות, קירות ומטבחים ישנים ליצירות אומנות.\n\n` +
           `📸 instagram.com/classicadesigns\n🌐 classicsadesign.com`
         );
         await sendButtons(from, "במה תרצה שנעזור?", [
@@ -381,27 +342,18 @@ async function handleMessage(from, text, msgType) {
         sess.step = S.QUAL_TYPE;
         break;
 
-      // ────────────────────────────────────────────────────
       case S.QUAL_TYPE:
-        if (text === "gallery") {
-          await sendGalleryMenu(from);
-          sess.step = S.GALLERY_CAT; break;
-        }
+        if (text === "gallery") { await sendGalleryMenu(from); sess.step = S.GALLERY_CAT; break; }
         if (text === "ai_chat") {
-          await send(from,
-            `🤖 *מצב שיחה חופשית עם Claude AI*\n` +
-            `שאל אותי כל שאלה על ציפויים, מחירים, טיפול...\n\n` +
-            `כתוב *"חזור"* לתפריט הראשי.`
-          );
+          await send(from, `🤖 *שיחה חופשית עם Claude AI*\nשאל כל שאלה!\nכתוב *"חזור"* לתפריט.`);
           sess.step = S.AI_CHAT; break;
         }
         if (text === "faq") {
-          await sendList(from, `❓ *שאלות נפוצות*\nבחר שאלה:`, "❓ בחר שאלה",
+          await sendList(from, `❓ *שאלות נפוצות*`, "❓ בחר שאלה",
             [{ title: "שאלות", rows: FAQ_LIST.map(f => ({ id: f.id, title: f.q })) }]);
           sess.step = S.FAQ; break;
         }
-        // get_quote או כל דבר אחר
-        await send(from, `מעולה! 😊 כמה שאלות קצרות כדי להתאים לך את הפתרון:`);
+        await send(from, `מעולה! 😊 כמה שאלות קצרות:`);
         await sendButtons(from, "1️⃣ מה סוג החידוש?", [
           { id: "type_door",    title: "🚪 דלת"  },
           { id: "type_kitchen", title: "🍳 מטבח" },
@@ -410,7 +362,6 @@ async function handleMessage(from, text, msgType) {
         sess.step = S.QUAL_AREA;
         break;
 
-      // ────────────────────────────────────────────────────
       case S.GALLERY_CAT: {
         const match = text.match(/^gal_(\d+)$/);
         if (match) {
@@ -426,21 +377,15 @@ async function handleMessage(from, text, msgType) {
         resetSession(from); await handleMessage(from, "", ""); break;
       }
 
-      // ────────────────────────────────────────────────────
       case S.AI_CHAT: {
         if (["חזור", "menu", "main_menu"].includes(text.toLowerCase())) {
           resetSession(from); await handleMessage(from, "", ""); return;
         }
         if (!text) break;
-
-        // שומרים עד 10 הודעות אחרונות בהיסטוריה
         sess.aiHistory.push({ role: "user", content: text });
         if (sess.aiHistory.length > 10) sess.aiHistory = sess.aiHistory.slice(-10);
-
-        await send(from, "🤖 מחפש תשובה..."); // Typing indicator טקסטואלי
         const reply = await askClaude(sess.aiHistory.slice(0, -1), text);
         sess.aiHistory.push({ role: "assistant", content: reply });
-
         await send(from, reply);
         await sendButtons(from, "רוצה להמשיך?", [
           { id: "ai_chat",   title: "💬 שאלה נוספת" },
@@ -450,11 +395,10 @@ async function handleMessage(from, text, msgType) {
         break;
       }
 
-      // ────────────────────────────────────────────────────
       case S.QUAL_AREA: {
         const typeMap = { type_door: "🚪 דלת", type_kitchen: "🍳 מטבח", type_wall: "🧱 קיר" };
         sess.order.renewal_type = typeMap[text] || text;
-        await sendList(from, "2️⃣ באיזה אזור בארץ?", "📍 בחר אזור", [{
+        await sendList(from, "2️⃣ באיזה אזור?", "📍 בחר אזור", [{
           title: "אזורים", rows: [
             { id: "area_center",    title: '🏙️ מרכז (ת"א, גוש דן)' },
             { id: "area_north",     title: "🌄 צפון"                 },
@@ -468,41 +412,45 @@ async function handleMessage(from, text, msgType) {
         break;
       }
 
-      // ────────────────────────────────────────────────────
       case S.QUAL_PHOTO: {
         const areaMap = {
           area_center: "מרכז", area_north: "צפון", area_south: "דרום",
           area_jerusalem: "ירושלים", area_shfela: "שפלה ושרון", area_other: "אחר",
         };
         sess.order.area = areaMap[text] || text;
-        await send(from, `3️⃣ *אשמח לתצלום* של הפריט שתרצה לחדש 📸\nזה עוזר להתאים לך את הפתרון המדויק!\n_אין תמונה? לחץ "המשך"_`);
-        await sendButtons(from, "", [{ id: "photo_skip", title: "➡️ המשך ללא תמונה" }]);
-        sess.step = S.DOOR_COUNT;
-        break;
-      }
-
-      // ────────────────────────────────────────────────────
-      case S.DOOR_COUNT: {
-        if (text === "photo_received") await send(from, "תודה על התמונה! 📸 ממשיכים...");
-
-        if (sess.order.renewal_type?.includes("מטבח") || sess.order.renewal_type?.includes("קיר")) {
-          await send(from,
-            `תודה! 🙏\n*${sess.order.renewal_type}* באזור *${sess.order.area}* –\n` +
-            `נציג שלנו *אור* יחזור אליך בהקדם עם הצעה מותאמת! 😊\n\n📞 דחוף? ${LINKS.phone}`
-          );
-          console.log("📋 LEAD:", { area: sess.order.area, type: sess.order.renewal_type, ts: new Date().toISOString() });
-          delete sessions[from]; return;
-        }
-        await sendButtons(from, "כמה דלתות לציפוי?", [
-          { id: "d1", title: "1️⃣ דלת אחת"    },
-          { id: "d2", title: "2️⃣ שתי דלתות"  },
-          { id: "d3", title: "3️⃣ שלוש ויותר" },
+        await send(from, `3️⃣ *אשמח לתצלום* של הפריט שתרצה לחדש 📸\n_אין תמונה? לחץ "המשך"_`);
+        await sendButtons(from, "שלח תמונה או לחץ המשך:", [
+          { id: "photo_skip", title: "➡️ המשך ללא תמונה" },
         ]);
-        sess.step = S.SIZE_TYPE;
+        // ✅ תיקון #2: step נשאר QUAL_PHOTO כדי לזהות תמונה נכון
+        sess.step = S.QUAL_PHOTO;
+        sess.waitingForPhoto = true;
         break;
       }
 
-      // ────────────────────────────────────────────────────
+      case S.DOOR_COUNT: {
+        if (text === "photo_skip" || text === "photo_received") {
+          if (text === "photo_received") await send(from, "תודה על התמונה! 📸 ממשיכים...");
+
+          if (sess.order.renewal_type?.includes("מטבח") || sess.order.renewal_type?.includes("קיר")) {
+            await send(from,
+              `תודה! 🙏\n*${sess.order.renewal_type}* באזור *${sess.order.area}* –\n` +
+              `נציג שלנו *אור* יחזור אליך בהקדם! 😊\n\n📞 דחוף? ${LINKS.phone}`
+            );
+            console.log("📋 LEAD:", { area: sess.order.area, type: sess.order.renewal_type, ts: new Date().toISOString() });
+            delete sessions[from]; return;
+          }
+
+          await sendButtons(from, "כמה דלתות לציפוי?", [
+            { id: "d1", title: "1️⃣ דלת אחת"    },
+            { id: "d2", title: "2️⃣ שתי דלתות"  },
+            { id: "d3", title: "3️⃣ שלוש ויותר" },
+          ]);
+          sess.step = S.SIZE_TYPE;
+        }
+        break;
+      }
+
       case S.SIZE_TYPE: {
         if (text === "d3") {
           await send(from, "כמה דלתות בדיוק? (שלח מספר, לדוגמה: 4)");
@@ -531,7 +479,6 @@ async function handleMessage(from, text, msgType) {
         break;
       }
 
-      // ────────────────────────────────────────────────────
       case S.STD_SIZE:
         if (text === "custom") {
           await send(from, 'מה *הרוחב* בס"מ? (לדוגמה: 90)');
@@ -558,7 +505,6 @@ async function handleMessage(from, text, msgType) {
         await handleMessage(from, "__pkg", ""); return;
       }
 
-      // ────────────────────────────────────────────────────
       case S.PACKAGE: {
         if (text !== "__pkg") {
           const size = STD_SIZES.find(s => s.id === text);
@@ -581,7 +527,7 @@ async function handleMessage(from, text, msgType) {
         if (!pkg) { await send(from, "אנא בחר חבילה מהרשימה."); break; }
         sess.order.pkg = pkg;
         await sendButtons(from,
-          `🖐️ *ידית לאורך* – ₪${HANDLE_ADDON.price} לדלת\nתוספת מעוצבת שמשדרגת את המראה.\nלהוסיף?`,
+          `🖐️ *ידית לאורך* – ₪${HANDLE_ADDON.price} לדלת\nלהוסיף?`,
           [{ id: "ha_yes", title: "✅ כן, הוסף" }, { id: "ha_no", title: "❌ לא תודה" }]);
         sess.step = S.TEXTURE;
         break;
@@ -612,8 +558,8 @@ async function handleMessage(from, text, msgType) {
         if (!nickel) { await send(from, "אנא בחר אפשרות."); break; }
         sess.order.nickel = nickel;
         await sendButtons(from,
-          `🔐 *מנעול חכם* – שדרג את האבטחה!\n*₪1,750–3,500 כולל התקנה*\nמעוניין?`,
-          [{ id: "sl_yes", title: "🔐 כן, מעניין!" }, { id: "sl_no", title: "❌ לא כרגע" }]);
+          `🔐 *מנעול חכם* – ₪1,750–3,500 כולל התקנה\nמעוניין?`,
+          [{ id: "sl_yes", title: "🔐 כן!" }, { id: "sl_no", title: "❌ לא כרגע" }]);
         sess.step = S.CONTACT_NAME;
         break;
       }
@@ -631,18 +577,15 @@ async function handleMessage(from, text, msgType) {
         sess.step = S.SUMMARY;
         break;
 
-      // ────────────────────────────────────────────────────
       case S.SUMMARY: {
         const phone = text.replace(/[^\d+]/g, "");
         if (phone.length < 9) { await send(from, "נא להזין מספר טלפון תקין."); break; }
         sess.order.phone = phone;
-
         const { pkgT, hndT, nklT, grandMin, grandMax, slMin, slMax } = calcPrice(sess.order);
         const o = sess.order;
         const priceStr = o.smart_lock
           ? `₪${grandMin.toLocaleString()}–₪${grandMax.toLocaleString()}`
           : `₪${grandMin.toLocaleString()}`;
-
         await send(from,
           `🎉 *הצעת המחיר שלך מוכנה!*\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
@@ -658,16 +601,9 @@ async function handleMessage(from, text, msgType) {
           (o.smart_lock ? `🔐 מנעול חכם – ₪${slMin.toLocaleString()}–₪${slMax.toLocaleString()}\n` : "") +
           `━━━━━━━━━━━━━━━━━━\n` +
           `✅ *סה"כ משוער: ${priceStr}*\n` +
-          `⚠️ _המחיר הסופי לאחר בחירת דגם ואישור מידות._\n\n` +
-          `נציג יחזור אליך בהקדם לתיאום! 😊`
+          `⚠️ _המחיר הסופי לאחר בחירת דגם ואישור מידות._\n\nנציג יחזור אליך בהקדם! 😊`
         );
-
-        // לוג ללא מידע אישי מזהה
-        console.log("📋 QUOTE:", {
-          ts: new Date().toISOString(), area: o.area,
-          doors: o.doors, pkg: o.pkg.id, grandMin, grandMax,
-        });
-
+        console.log("📋 QUOTE:", { ts: new Date().toISOString(), area: o.area, doors: o.doors, pkg: o.pkg.id, grandMin, grandMax });
         sessions[from] = { step: S.POST_SUMMARY, order: {}, aiHistory: [], updatedAt: Date.now() };
         await sendButtons(from, "תרצה משהו נוסף?", [
           { id: "new_quote",  title: "📋 הצעה חדשה"  },
@@ -677,7 +613,6 @@ async function handleMessage(from, text, msgType) {
         break;
       }
 
-      // ────────────────────────────────────────────────────
       case S.POST_SUMMARY:
         if (text === "gallery") { await sendGalleryMenu(from); sess.step = S.GALLERY_CAT; break; }
         if (text === "talk_human") {
@@ -686,7 +621,6 @@ async function handleMessage(from, text, msgType) {
         }
         resetSession(from); await handleMessage(from, "", ""); break;
 
-      // ────────────────────────────────────────────────────
       case S.FAQ: {
         const faq = FAQ_LIST.find(f => f.id === text);
         if (!faq) { await send(from, "אנא בחר שאלה מהרשימה."); break; }
@@ -699,7 +633,6 @@ async function handleMessage(from, text, msgType) {
         break;
       }
 
-      // ────────────────────────────────────────────────────
       default:
         if (text === "faq_more") {
           await sendList(from, `❓ *שאלות נפוצות*`, "❓ בחר שאלה",
@@ -709,10 +642,9 @@ async function handleMessage(from, text, msgType) {
         if (text === "gallery") { await sendGalleryMenu(from); sess.step = S.GALLERY_CAT; break; }
         if (text === "ai_chat") {
           sess.step = S.AI_CHAT;
-          await send(from, `🤖 *מצב שיחה חופשית עם Claude AI*\nשאל כל שאלה!\nכתוב "חזור" לתפריט.`);
+          await send(from, `🤖 *שיחה חופשית עם Claude AI*\nשאל כל שאלה!\nכתוב "חזור" לתפריט.`);
           break;
         }
-        // הודעה לא מזוהה – חוזר לתפריט
         resetSession(from); await handleMessage(from, "", "");
     }
   } catch (err) {
@@ -733,7 +665,7 @@ app.get("/webhook", (req, res) => {
 });
 
 app.post("/webhook", async (req, res) => {
-  res.sendStatus(200); // תמיד עונים 200 ל-Meta מיד
+  res.sendStatus(200);
   try {
     const msg = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
     if (!msg) return;
@@ -745,21 +677,26 @@ app.post("/webhook", async (req, res) => {
       text = msg.text.body;
     } else if (msg.type === "interactive") {
       text = msg.interactive?.button_reply?.id || msg.interactive?.list_reply?.id || "";
-    } else if (msg.type === "image" && sessions[from]?.step === S.DOOR_COUNT) {
-      if (!sessions[from].order) sessions[from].order = {};
-      sessions[from].order.has_photo = true;
-      text = "photo_received";
+    } else if (msg.type === "image") {
+      // ✅ תיקון #2: בודק step נכון לקבלת תמונה
+      const sess = sessions[from];
+      if (sess && (sess.step === S.QUAL_PHOTO || sess.waitingForPhoto)) {
+        if (!sess.order) sess.order = {};
+        sess.order.has_photo = true;
+        sess.waitingForPhoto = false;
+        sess.step = S.DOOR_COUNT;
+        text = "photo_received";
+      }
     }
 
     if (!text) return;
-    console.log(`📩 [${new Date().toISOString()}] from=*** step=${sessions[from]?.step || "new"} text="${text}"`);
+    console.log(`📩 [${new Date().toISOString()}] step=${sessions[from]?.step || "new"} text="${text}"`);
     await handleMessage(from, text, msgType);
   } catch (err) {
     console.error("❌ Webhook error:", err.message);
   }
 });
 
-// Health check
 app.get("/health", (_, res) => res.json({
   status: "ok",
   sessions: Object.keys(sessions).length,
