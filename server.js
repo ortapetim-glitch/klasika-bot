@@ -496,44 +496,66 @@ async function handleMessage(from, text) {
         sess.step = "nickel_h";
         break;
 
-      // ── פסי ניקל לרוחב ───────────────────────────────
+      // ── פסי ניקל — בחירת סוג ─────────────────────────
       case "nickel_h": {
         const texMap = { tex_smooth:"גוון חלק", tex_bold:"טקסטורה מודגשת" };
         sess.order.texture = texMap[text] || text;
-        await send(from,
-          `פסי ניקל לרוחב - ${NICKEL_PRICE_H} שח לפס\n` +
-          `כמה פסים לרוחב? (0-4)\nשלח מספר:`
+        await sendList(from,
+          `פסי ניקל מאלומיניום:\n` +
+          `לרוחב - ${NICKEL_PRICE_H} שח לפס (עד 4)\n` +
+          `לאורך - ${NICKEL_PRICE_V} שח לפס (עד 2)`,
+          "בחר אפשרות",
+          [{ title:"פסי ניקל", rows:[
+            { id:"nk_none",  title:"ללא פסי ניקל",          description:"ללא תוספת" },
+            { id:"nk_h1",    title:"1 פס לרוחב",             description:`${NICKEL_PRICE_H} שח` },
+            { id:"nk_h2",    title:"2 פסים לרוחב",           description:`${NICKEL_PRICE_H*2} שח` },
+            { id:"nk_h3",    title:"3 פסים לרוחב",           description:`${NICKEL_PRICE_H*3} שח` },
+            { id:"nk_h4",    title:"4 פסים לרוחב",           description:`${NICKEL_PRICE_H*4} שח` },
+            { id:"nk_v1",    title:"1 פס לאורך",             description:`${NICKEL_PRICE_V} שח` },
+            { id:"nk_v2",    title:"2 פסים לאורך",           description:`${NICKEL_PRICE_V*2} שח` },
+            { id:"nk_combo", title:"2 לרוחב + 1 לאורך",      description:`${NICKEL_PRICE_H*2+NICKEL_PRICE_V} שח` },
+          ]}]
         );
         sess.step = "nickel_v";
         break;
       }
 
-      // ── פסי ניקל לאורך ───────────────────────────────
+      // ── פסי ניקל — שמירת בחירה ───────────────────────
       case "nickel_v": {
-        const h = parseInt(text);
-        if (isNaN(h) || h < 0 || h > 4) { await send(from, "נא להזין מספר בין 0 ל-4."); break; }
-        sess.order.nickel_h = h;
-        await send(from,
-          `פסי ניקל לאורך - ${NICKEL_PRICE_V} שח לפס\n` +
-          `כמה פסים לאורך? (0-4)\nשלח מספר:`
-        );
+        const nickelMap = {
+          nk_none:  { h:0, v:0 },
+          nk_h1:    { h:1, v:0 },
+          nk_h2:    { h:2, v:0 },
+          nk_h3:    { h:3, v:0 },
+          nk_h4:    { h:4, v:0 },
+          nk_v1:    { h:0, v:1 },
+          nk_v2:    { h:0, v:2 },
+          nk_combo: { h:2, v:1 },
+        };
+        const choice = nickelMap[text];
+        if (!choice) { await send(from, "אנא בחר אפשרות מהרשימה."); break; }
+        sess.order.nickel_h = choice.h;
+        sess.order.nickel_v = choice.v;
         sess.step = "smart_lock";
+        await handleMessage(from, "__nickel_done"); return;
         break;
       }
 
       // ── מנעול חכם ────────────────────────────────────
       case "smart_lock": {
-        const v = parseInt(text);
-        if (isNaN(v) || v < 0 || v > 4) { await send(from, "נא להזין מספר בין 0 ל-4."); break; }
-        sess.order.nickel_v = v;
+        // מגיע מבחירת ניקל
+        const h = sess.order.nickel_h || 0;
+        const v = sess.order.nickel_v || 0;
+        const nklTotal = h * NICKEL_PRICE_H + v * NICKEL_PRICE_V;
 
-        const totalNickel = (sess.order.nickel_h || 0) + (sess.order.nickel_v || 0);
-        if (totalNickel > 0) {
+        if (h > 0 || v > 0) {
           await send(from,
-            `נבחרו:\n` +
-            (sess.order.nickel_h > 0 ? `${sess.order.nickel_h} פסים לרוחב - ${sess.order.nickel_h * NICKEL_PRICE_H} שח\n` : "") +
-            (sess.order.nickel_v > 0 ? `${sess.order.nickel_v} פסים לאורך - ${sess.order.nickel_v * NICKEL_PRICE_V} שח\n` : "")
+            `נבחר:\n` +
+            (h > 0 ? `${h} פסים לרוחב - ${h * NICKEL_PRICE_H} שח לדלת\n` : "") +
+            (v > 0 ? `${v} פסים לאורך - ${v * NICKEL_PRICE_V} שח לדלת\n` : "")
           );
+        } else {
+          await send(from, "ללא פסי ניקל");
         }
 
         await sendButtons(from,
@@ -639,6 +661,8 @@ async function handleMessage(from, text) {
         }
         if (text === "gallery")  { await sendGalleryMenu(from); sess.step = "gallery_cat"; break; }
         if (text === "ai_chat")  { sess.step = "ai_chat"; await send(from, "שאל כל שאלה!\nכתוב חזור לתפריט."); break; }
+        // אל תאפס אם זה מספר — יכול להיות קלט לגיטימי
+        if (/^\d+$/.test(text)) { await send(from, "נסה שוב או שלח 'שלום' לתפריט."); break; }
         resetSession(from); await handleMessage(from, "");
     }
   } catch (err) {
