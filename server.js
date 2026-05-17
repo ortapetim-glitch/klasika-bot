@@ -400,7 +400,7 @@ async function handleMessage(from, text) {
         await send(from, "בחר מידה או שלח בפורמט: 90x210");
         await sendButtons(from, "מידות נפוצות:", [
           { id:"s1", title:"200x90 סמ" },
-          { id:"s2", title:"210x90 סמ" },
+          { id:"s2", title:"סטנדרט 210x90" },
           { id:"custom", title:"מידה אחרת" },
         ]);
         sess.step = "pick_size";
@@ -414,7 +414,7 @@ async function handleMessage(from, text) {
         await send(from, "בחר מידה או שלח בפורמט: 90x210");
         await sendButtons(from, "מידות נפוצות:", [
           { id:"s1", title:"200x90 סמ" },
-          { id:"s2", title:"210x90 סמ" },
+          { id:"s2", title:"סטנדרט 210x90" },
           { id:"custom", title:"מידה אחרת" },
         ]);
         sess.step = "pick_size";
