@@ -179,14 +179,30 @@ async function saveToSheets(order, grandMin, grandMax) {
   const url = process.env.GOOGLE_SHEET_URL;
   if (!url) return;
   try {
+    const o = order;
+    const nickelH = o.nickel_h || 0;
+    const nickelV = o.nickel_v || 0;
+    const nickelDesc = nickelH === 0 && nickelV === 0
+      ? "ללא"
+      : [
+          nickelH > 0 ? nickelH + " לרוחב (" + (nickelH * 35) + " שח)" : "",
+          nickelV > 0 ? nickelV + " לאורך (" + (nickelV * 70) + " שח)" : "",
+        ].filter(Boolean).join(" + ");
+
     await axios.post(url, {
-      name:  order.name  || "",
-      phone: order.phone || "",
-      area:  order.area  || "",
-      type:  order.renewal_type || "",
-      doors: order.doors || "",
-      pkg:   order.pkg?.name || "",
-      total: order.smart_lock
+      name:        o.name  || "",
+      phone:       o.phone || "",
+      area:        o.area  || "",
+      type:        o.renewal_type || "",
+      doors:       o.doors || "",
+      size:        (o.width_cm || "") + "x" + (o.height_cm || "") + " סמ",
+      pkg:         o.pkg?.name || "",
+      pkg_price:   o.pkg ? o.pkg.price * o.doors + " שח" : "",
+      handle:      o.handle_addon ? "כן (" + (499 * o.doors) + " שח)" : "לא",
+      texture:     o.texture || "",
+      nickel:      nickelDesc,
+      smart_lock:  o.smart_lock ? "כן" : "לא",
+      total:       o.smart_lock
         ? grandMin.toLocaleString() + "-" + grandMax.toLocaleString() + " שח"
         : grandMin.toLocaleString() + " שח",
     });
