@@ -174,6 +174,28 @@ const STD_SIZES = [
 
 const LINKS = { phone: "0539312574", website: "https://classicsadesign.com" };
 
+// שמירת ליד ל-Google Sheets
+async function saveToSheets(order, grandMin, grandMax) {
+  const url = process.env.GOOGLE_SHEET_URL;
+  if (!url) return;
+  try {
+    await axios.post(url, {
+      name:  order.name  || "",
+      phone: order.phone || "",
+      area:  order.area  || "",
+      type:  order.renewal_type || "",
+      doors: order.doors || "",
+      pkg:   order.pkg?.name || "",
+      total: order.smart_lock
+        ? grandMin.toLocaleString() + "-" + grandMax.toLocaleString() + " שח"
+        : grandMin.toLocaleString() + " שח",
+    });
+    console.log("✅ ליד נשמר ב-Google Sheets");
+  } catch (err) {
+    console.error("❌ Google Sheets:", err.message);
+  }
+}
+
 const FAQ_LIST = [
   { id: "faq_install", q: "כמה זמן לוקחת ההתקנה",   a: "דלת אחת - שעה עד שעתיים. ניתן להשתמש מיד!" },
   { id: "faq_doors",   q: "על אילו דלתות מתאים",     a: "מתכת, עץ, MDF, PVC, ישנה לחידוש" },
@@ -620,6 +642,7 @@ async function handleMessage(from, text) {
         );
 
         console.log("📋 QUOTE:", { ts:new Date().toISOString(), area:o.area, doors:o.doors, pkg:o.pkg.id, grandMin, grandMax });
+        await saveToSheets(o, grandMin, grandMax);
 
         sessions[from] = { step:"post_summary", order:{}, aiHistory:[], updatedAt:Date.now() };
         await sendButtons(from, "תרצה משהו נוסף?", [
